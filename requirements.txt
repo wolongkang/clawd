@@ -1,0 +1,6 @@
+python-telegram-bot>=20.0
+openai>=1.0
+PyJWT
+requests
+gTTS
+python-dotenv

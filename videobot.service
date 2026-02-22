@@ -1,0 +1,15 @@
+[Unit]
+Description=OpenClaw Video Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/videobot
+ExecStart=/root/videobot/venv/bin/python main.py
+Restart=always
+RestartSec=5
+EnvironmentFile=/root/videobot/.env
+
+[Install]
+WantedBy=multi-user.target
