@@ -12,27 +12,53 @@ logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 
+def _tweet_format_keyboard():
+    """Keyboard to choose short-form or long-form for tweet videos."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Short (Animated ~30s)", callback_data="tweetfmt_short")],
+        [InlineKeyboardButton("Long (YouTube 5-20m)", callback_data="tweetfmt_long")],
+    ])
+
+
+def _tweet_short_keyboard():
+    """Scene count keyboard for short-form tweet video."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("3 scenes (~21s)", callback_data="tweet_3"),
+            InlineKeyboardButton("4 scenes (~28s)", callback_data="tweet_4"),
+        ],
+        [
+            InlineKeyboardButton("5 scenes (~35s)", callback_data="tweet_5"),
+            InlineKeyboardButton("6 scenes (~42s)", callback_data="tweet_6"),
+        ],
+    ])
+
+
+def _tweet_long_keyboard():
+    """Duration keyboard for long-form tweet video."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("5 min", callback_data="tweetlong_5"),
+            InlineKeyboardButton("10 min", callback_data="tweetlong_10"),
+        ],
+        [
+            InlineKeyboardButton("15 min", callback_data="tweetlong_15"),
+            InlineKeyboardButton("20 min", callback_data="tweetlong_20"),
+        ],
+    ])
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     mode = context.user_data.get("mode")
 
-    # Auto-detect tweet URLs — skip menu, go straight to scene count
+    # Auto-detect tweet URLs — show format choice (short vs long)
     if not mode and is_tweet_url(text):
         context.user_data["mode"] = "tweet"
         context.user_data["topic"] = text
-        keyboard = [
-            [
-                InlineKeyboardButton("3 scenes (~21s)", callback_data="tweet_3"),
-                InlineKeyboardButton("4 scenes (~28s)", callback_data="tweet_4"),
-            ],
-            [
-                InlineKeyboardButton("5 scenes (~35s)", callback_data="tweet_5"),
-                InlineKeyboardButton("6 scenes (~42s)", callback_data="tweet_6"),
-            ],
-        ]
         await update.message.reply_text(
-            "Tweet detected! How many scenes?",
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            "Tweet detected! What format?",
+            reply_markup=_tweet_format_keyboard(),
         )
         return
 
@@ -56,17 +82,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("How many scenes?", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif mode == "tweet":
-        keyboard = [
-            [
-                InlineKeyboardButton("3 scenes (~21s)", callback_data="tweet_3"),
-                InlineKeyboardButton("4 scenes (~28s)", callback_data="tweet_4"),
-            ],
-            [
-                InlineKeyboardButton("5 scenes (~35s)", callback_data="tweet_5"),
-                InlineKeyboardButton("6 scenes (~42s)", callback_data="tweet_6"),
-            ],
-        ]
-        await update.message.reply_text("How many scenes?", reply_markup=InlineKeyboardMarkup(keyboard))
+        await update.message.reply_text(
+            "What format?",
+            reply_markup=_tweet_format_keyboard(),
+        )
 
     elif mode == "youtube":
         keyboard = [
@@ -91,9 +110,19 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         scene_count = int(data.split("_")[1])
         await animated_video.handle(query, context, scene_count)
 
+    elif data == "tweetfmt_short":
+        await query.edit_message_text("How many scenes?", reply_markup=_tweet_short_keyboard())
+
+    elif data == "tweetfmt_long":
+        await query.edit_message_text("Duration?", reply_markup=_tweet_long_keyboard())
+
     elif data.startswith("tweet_"):
         scene_count = int(data.split("_")[1])
         await tweet_video.handle(query, context, scene_count)
+
+    elif data.startswith("tweetlong_"):
+        minutes = int(data.split("_")[1])
+        await tweet_video.handle_long(query, context, minutes)
 
     elif data.startswith("yt_"):
         minutes = int(data.split("_")[1])
@@ -179,7 +208,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_menu, pattern="^menu_"))
-    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|tweet_|yt_|ytup_)"))
+    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|tweet|yt_|ytup_)"))
     logger.info("OpenClaw Bot starting...")
     app.run_polling()
 

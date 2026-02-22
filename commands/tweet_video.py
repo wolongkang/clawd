@@ -8,8 +8,9 @@ from openai import OpenAI
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from config import XAI_API_KEY
-from apis import fal_api, youtube_upload
+from apis import fal_api, haiku, tts, youtube_upload
 from apis.haiku import _call_haiku
+from utils.video import create_ken_burns_clips, composite_slides_video, get_duration
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +298,150 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     _cleanup(work_dir, keep_final=output_path)
 
     # Offer YouTube upload
+    if youtube_upload.is_available():
+        keyboard = [
+            [InlineKeyboardButton("Public", callback_data="ytup_public"),
+             InlineKeyboardButton("Unlisted", callback_data="ytup_unlisted"),
+             InlineKeyboardButton("Private", callback_data="ytup_private")],
+            [InlineKeyboardButton("Skip", callback_data="ytup_skip")],
+        ]
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Upload to YouTube?\n({size_mb:.0f}MB)",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    context.user_data["mode"] = None
+
+
+WORDS_PER_MINUTE = 150
+
+
+async def handle_long(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
+    """Handle long-form YouTube video generation from a tweet."""
+    tweet_text = context.user_data.get("topic", "")
+    user_id = query.from_user.id
+    work_dir = _get_work_dir(user_id)
+
+    # 1. Grok: analyze tweet + search X
+    await query.edit_message_text(f"[1/5] Grok analyzing tweet + searching X...")
+    grok_analysis = await _analyze_tweet_with_grok(tweet_text)
+    if not grok_analysis:
+        await query.edit_message_text("Failed to analyze tweet. Check XAI_API_KEY.")
+        context.user_data["mode"] = None
+        return
+
+    await query.edit_message_text(f"[1/5] X context gathered!")
+
+    # 2. Structured script with chapters from tweet + Grok context
+    await query.edit_message_text(f"[2/5] Writing {minutes}m structured script from tweet...")
+    script_data = await haiku.generate_tweet_script_structured(tweet_text, grok_analysis, minutes)
+    if not script_data or "chapters" not in script_data:
+        await query.edit_message_text("Structured script generation failed.")
+        context.user_data["mode"] = None
+        return
+
+    chapters = script_data["chapters"]
+    full_narration = "\n\n".join(ch.get("narration", "") for ch in chapters)
+    word_count = len(full_narration.split())
+    await query.edit_message_text(
+        f"[2/5] Script ready: {len(chapters)} chapters, {word_count} words (~{word_count // WORDS_PER_MINUTE}m)"
+    )
+
+    # 3. Audio (ElevenLabs)
+    await query.edit_message_text(f"[3/5] Generating voiceover (ElevenLabs)...")
+    audio = await tts.generate_speech(full_narration, target_minutes=minutes)
+    if not audio:
+        await query.edit_message_text("Audio generation failed.")
+        context.user_data["mode"] = None
+        return
+
+    audio_path = os.path.join(work_dir, "audio.mp3")
+    with open(audio_path, "wb") as f:
+        f.write(audio)
+
+    # 4. Generate AI slide images + Ken Burns + composite
+    await query.edit_message_text(f"[4/5] Generating {len(chapters)} slides + compositing...")
+    slide_urls = []
+
+    for i, ch in enumerate(chapters):
+        await query.edit_message_text(
+            f"[4/5] Generating slide {i+1}/{len(chapters)}: {ch.get('title', '')}..."
+        )
+        url = await fal_api.generate_slide(ch.get("visual", f"Cinematic scene about {tweet_text[:50]}"))
+        if url:
+            slide_urls.append(url)
+        else:
+            url = await fal_api.generate_slide(
+                f"Cinematic 16:9 photorealistic scene about {ch.get('title', 'topic')}, "
+                f"professional lighting, high detail"
+            )
+            if url:
+                slide_urls.append(url)
+            else:
+                await query.edit_message_text(f"Slide generation failed at chapter {i+1}.")
+                context.user_data["mode"] = None
+                _cleanup(work_dir)
+                return
+
+    # Calculate per-chapter durations
+    audio_dur = get_duration(audio_path)
+    if audio_dur <= 0:
+        await query.edit_message_text("Audio has zero duration.")
+        context.user_data["mode"] = None
+        _cleanup(work_dir)
+        return
+
+    chapter_words = [len(ch.get("narration", "").split()) for ch in chapters]
+    total_words_count = max(sum(chapter_words), 1)
+    chapter_durations = [max(3.0, (w / total_words_count) * audio_dur) for w in chapter_words]
+
+    await query.edit_message_text("[4/5] Creating animated slides...")
+
+    kb_clips = create_ken_burns_clips(slide_urls, chapter_durations, work_dir)
+    if not kb_clips:
+        await query.edit_message_text("Slide animation failed.")
+        context.user_data["mode"] = None
+        _cleanup(work_dir)
+        return
+
+    output_path = os.path.join(work_dir, "final_long.mp4")
+    success = composite_slides_video(kb_clips, audio_path, output_path)
+
+    if not success or not os.path.exists(output_path):
+        await query.edit_message_text("Video composition failed.")
+        context.user_data["mode"] = None
+        _cleanup(work_dir)
+        return
+
+    # 5. Deliver
+    file_size = os.path.getsize(output_path)
+    size_mb = file_size / (1024 * 1024)
+    await query.edit_message_text(f"[5/5] Uploading {size_mb:.0f}MB video...")
+
+    tweet_short = tweet_text[:100] + "..." if len(tweet_text) > 100 else tweet_text
+    context.user_data["last_video_path"] = output_path
+    context.user_data["last_video_topic"] = tweet_short
+    context.user_data["last_video_script"] = full_narration
+
+    chat_id = query.message.chat_id
+
+    if file_size <= 50 * 1024 * 1024:
+        with open(output_path, "rb") as f:
+            await context.bot.send_video(
+                chat_id=chat_id,
+                video=f.read(),
+                caption=f"{minutes}m Tweet Deep-Dive — {tweet_short}",
+            )
+        await query.delete_message()
+    else:
+        await query.edit_message_text(
+            f"Video is {size_mb:.0f}MB — exceeds Telegram's 50MB limit.\n"
+            f"Saved on server: {output_path}"
+        )
+
+    _cleanup(work_dir, keep_final=output_path)
+
     if youtube_upload.is_available():
         keyboard = [
             [InlineKeyboardButton("Public", callback_data="ytup_public"),

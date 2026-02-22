@@ -175,3 +175,101 @@ async def generate_youtube_script_structured(topic: str, minutes: int) -> dict:
     except Exception as e:
         logger.error(f"Structured script error: {e}")
         return None
+
+
+async def generate_tweet_script_structured(tweet: str, grok_analysis: str, minutes: int) -> dict:
+    """Generate a structured long-form script from a tweet + Grok X context.
+
+    Returns: {"chapters": [{"title": "...", "narration": "...", "visual": "..."}]}
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    chapter_count = max(4, min(16, minutes * 2 - 2))
+    target_words = minutes * WORDS_PER_MINUTE
+    words_per_chapter = target_words // chapter_count
+
+    try:
+        prompt = (
+            f"You are writing a {minutes}-minute YouTube video script based on a tweet and its "
+            f"context from X (Twitter).\n\n"
+            f"ORIGINAL TWEET:\n{tweet}\n\n"
+            f"CONTEXT FROM X (related posts, opinions, trending takes):\n{grok_analysis}\n\n"
+            f"Structure it as exactly {chapter_count} chapters. "
+            f"Each chapter should have approximately {words_per_chapter} words of narration.\n\n"
+            f"The video should be a deep-dive commentary/analysis of the tweet's topic, "
+            f"incorporating the broader X conversation. Make it engaging, opinionated, "
+            f"and well-researched.\n\n"
+            f"For each chapter, provide:\n"
+            f"1. \"title\" - short chapter title (2-5 words)\n"
+            f"2. \"narration\" - the spoken narration text (~{words_per_chapter} words). "
+            f"Professional but engaging tone, reference real points from X context, "
+            f"include facts and analysis. No stage directions, just spoken words.\n"
+            f"3. \"visual\" - a detailed image generation prompt for this chapter's visual slide. "
+            f"Describe a vivid, cinematic 16:9 scene that illustrates the chapter's topic. "
+            f"Include: subject, setting, lighting, mood, camera angle. "
+            f"Style: photorealistic, high detail, professional cinematography.\n\n"
+            f"Return ONLY valid JSON. No markdown, no explanation. Format:\n"
+            f'{{"chapters": [\n'
+            f'  {{"title": "The Hook", "narration": "Did you know that...", '
+            f'"visual": "A dramatic close-up of..."}}\n'
+            f"]}}"
+        )
+
+        result = _call_haiku(prompt, max_tokens=min(8000, target_words + 2000))
+        if not result:
+            return None
+
+        # Parse JSON
+        result = result.strip()
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+        data = json.loads(result)
+
+        if not isinstance(data, dict) or "chapters" not in data:
+            logger.error(f"Invalid tweet structured script format: {str(data)[:200]}")
+            return None
+
+        chapters = data["chapters"]
+        total_words = sum(len(ch.get("narration", "").split()) for ch in chapters)
+        logger.info(
+            f"Tweet structured script: {len(chapters)} chapters, "
+            f"{total_words} words (~{total_words / WORDS_PER_MINUTE:.1f} min)"
+        )
+
+        # Extend if too short
+        if total_words < target_words * 0.6:
+            logger.warning(f"Tweet script too short ({total_words}/{target_words}), extending...")
+            remaining = target_words - total_words
+            ext_prompt = (
+                f"The following script chapters are too short (total {total_words} words, "
+                f"need {target_words}). Add {remaining} more words by expanding each chapter's "
+                f"narration with more detail, examples, and analysis from the X context. "
+                f"Return the complete updated JSON in the same format.\n\n{result}"
+            )
+            ext_result = _call_haiku(ext_prompt, max_tokens=min(8000, remaining + 2000))
+            if ext_result:
+                ext_result = ext_result.strip()
+                if ext_result.startswith("```"):
+                    ext_result = ext_result.split("```")[1]
+                    if ext_result.startswith("json"):
+                        ext_result = ext_result[4:]
+                try:
+                    ext_data = json.loads(ext_result)
+                    if isinstance(ext_data, dict) and "chapters" in ext_data:
+                        data = ext_data
+                        total_words = sum(len(ch.get("narration", "").split()) for ch in data["chapters"])
+                        logger.info(f"Extended tweet script: {total_words} words (~{total_words / WORDS_PER_MINUTE:.1f} min)")
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse extended tweet script, using original")
+
+        return data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse tweet structured script JSON: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Tweet structured script error: {e}")
+        return None
