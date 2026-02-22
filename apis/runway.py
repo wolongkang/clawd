@@ -16,13 +16,19 @@ POLL_HEADERS = {
 }
 
 
-async def create_avatar(narrative: str) -> str:
+async def create_avatar(topic: str) -> str:
+    """Generate a short presenter avatar clip (10s) for PIP overlay."""
     try:
+        prompt = (
+            f"A professional, friendly video presenter standing in a modern studio, "
+            f"talking directly to the camera about {topic[:100]}. "
+            f"Well-lit, clean background, natural gestures, educational tone."
+        )
         payload = {
-            "model": "veo3",
-            "promptText": f"An AI character speaking: {narrative[:200]}",
+            "model": "gen3a_turbo",
+            "promptText": prompt,
             "ratio": "1280:720",
-            "duration": 8,
+            "duration": 10,
         }
         response = requests.post(
             "https://api.dev.runwayml.com/v1/text_to_video",
@@ -42,6 +48,7 @@ async def create_avatar(narrative: str) -> str:
 
 
 async def poll_avatar(task_id: str) -> str:
+    """Poll Runway until avatar video is ready."""
     for attempt in range(120):
         try:
             response = requests.get(
@@ -68,7 +75,7 @@ async def poll_avatar(task_id: str) -> str:
                     elif isinstance(output, str):
                         return output
 
-                    logger.error(f"Avatar SUCCEEDED but no usable URL in output: {output}")
+                    logger.error(f"Avatar SUCCEEDED but no usable URL: {output}")
                     return None
                 elif status in ("FAILED", "ERROR"):
                     logger.error(f"Avatar failed: {data}")

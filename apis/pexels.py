@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 async def get_footage(keyword: str, count: int = 3) -> list:
+    """Fetch stock video clips from Pexels."""
     try:
         response = requests.get(
             "https://api.pexels.com/videos/search",
@@ -23,3 +24,17 @@ async def get_footage(keyword: str, count: int = 3) -> list:
     except Exception as e:
         logger.error(f"Pexels error: {e}")
         return []
+
+
+async def get_footage_for_script(keywords: list[str], clips_per_keyword: int = 2) -> list:
+    """Fetch multiple clips using multiple keywords extracted from the script."""
+    all_urls = []
+    seen = set()
+    for kw in keywords:
+        urls = await get_footage(kw, count=clips_per_keyword)
+        for url in urls:
+            if url not in seen:
+                seen.add(url)
+                all_urls.append(url)
+    logger.info(f"Pexels total: {len(all_urls)} unique clips from {len(keywords)} keywords")
+    return all_urls

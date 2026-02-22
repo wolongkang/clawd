@@ -12,7 +12,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_gr
     topic = context.user_data.get("topic", "")
 
     # 1. Script
-    await query.edit_message_text(text="Writing script...")
+    await query.edit_message_text(text=f"[1/6] Writing {minutes}m script...")
     if use_grok and grok.is_available():
         script = await grok.generate_youtube_script(topic, minutes)
     else:
@@ -21,52 +21,80 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_gr
         await query.edit_message_text("Script generation failed.")
         return
 
-    # 2. Audio
-    await query.edit_message_text("Generating audio...")
-    audio = await tts.generate_speech(script)
+    word_count = len(script.split())
+    await query.edit_message_text(f"[1/6] Script ready: {word_count} words (~{word_count // 150}m)")
+
+    # 2. Audio (from script)
+    await query.edit_message_text(f"[2/6] Generating audio from script...")
+    audio = await tts.generate_speech(script, target_minutes=minutes)
     if not audio:
         await query.edit_message_text("Audio generation failed.")
         return
 
-    # 3. Avatar
-    await query.edit_message_text("Creating avatar...")
-    avatar_task = await runway.create_avatar(script)
+    # Save audio to disk (needed for ffmpeg)
+    audio_path = "/tmp/videobot/audio.mp3"
+    os.makedirs("/tmp/videobot", exist_ok=True)
+    with open(audio_path, "wb") as f:
+        f.write(audio)
+
+    # 3. Avatar (runs in parallel concept — but sequentially here for status updates)
+    await query.edit_message_text(f"[3/6] Creating avatar presenter...")
+    avatar_task = await runway.create_avatar(topic)
     if not avatar_task:
         await query.edit_message_text("Avatar creation failed.")
         return
 
-    await query.edit_message_text("Rendering avatar (this takes a few minutes)...")
+    await query.edit_message_text("[3/6] Rendering avatar (takes a few minutes)...")
     avatar_url = await runway.poll_avatar(avatar_task)
     if not avatar_url:
         await query.edit_message_text("Avatar rendering failed.")
         return
 
-    # 4. Background footage
-    await query.edit_message_text("Fetching background footage...")
-    footage = await pexels.get_footage(topic, count=1)
-    if not footage:
+    # 4. Background footage (multiple clips from script keywords)
+    await query.edit_message_text("[4/6] Finding background footage...")
+    keywords = await openai_api.extract_video_keywords(script, count=6)
+    if not keywords:
+        keywords = [topic]  # Fallback to just the topic
+
+    # Fetch enough clips to fill the video (~2 clips per keyword)
+    footage_urls = await pexels.get_footage_for_script(keywords, clips_per_keyword=2)
+    if not footage_urls:
+        # Fallback: try with just the topic
+        footage_urls = await pexels.get_footage(topic, count=5)
+    if not footage_urls:
         await query.edit_message_text("Could not find background footage.")
         return
 
-    # 5. Composite
-    await query.edit_message_text("Compositing final video...")
+    await query.edit_message_text(f"[4/6] Got {len(footage_urls)} background clips")
 
-    audio_path = "/tmp/audio.mp3"
-    with open(audio_path, "wb") as f:
-        f.write(audio)
+    # 5. Composite everything
+    await query.edit_message_text("[5/6] Compositing video (this takes a while)...")
 
-    output_path = "/tmp/final_video.mp4"
-    success = composite_video(footage[0], avatar_url, audio_path, output_path)
+    output_path = "/tmp/videobot/final_video.mp4"
+    success = composite_video(footage_urls, avatar_url, audio_path, output_path)
 
-    if success and os.path.exists(output_path):
-        await query.edit_message_text("Uploading...")
+    if not success or not os.path.exists(output_path):
+        await query.edit_message_text("Video composition failed.")
+        context.user_data["mode"] = None
+        return
+
+    # 6. Upload
+    file_size = os.path.getsize(output_path)
+    size_mb = file_size / (1024 * 1024)
+    await query.edit_message_text(f"[6/6] Uploading {size_mb:.0f}MB video...")
+
+    # Telegram limit is 50MB for bots
+    if file_size > 50 * 1024 * 1024:
+        await query.edit_message_text(
+            f"Video is {size_mb:.0f}MB which exceeds Telegram's 50MB limit.\n"
+            f"The video was saved on the server at:\n{output_path}"
+        )
+    else:
         with open(output_path, "rb") as f:
             await query.message.reply_video(
                 video=f.read(),
                 caption=f"{minutes}m YouTube Video - Ready to upload!",
             )
         await query.delete()
-    else:
-        await query.edit_message_text("Video composition failed.")
 
     context.user_data["mode"] = None
