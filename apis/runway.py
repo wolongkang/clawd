@@ -25,10 +25,10 @@ async def create_avatar(topic: str) -> str:
             f"Well-lit, clean background, natural gestures, educational tone."
         )
         payload = {
-            "model": "gen3a_turbo",
+            "model": "veo3",
             "promptText": prompt,
             "ratio": "1280:720",
-            "duration": 10,
+            "duration": 8,
         }
         response = requests.post(
             "https://api.dev.runwayml.com/v1/text_to_video",
