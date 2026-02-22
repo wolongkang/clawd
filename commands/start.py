@@ -1,6 +1,6 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from apis import grok
+from apis import grok, haiku
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8,6 +8,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("SHORT VIDEO (5-10s)", callback_data="menu_short")],
         [InlineKeyboardButton("YOUTUBE VIDEO (avatar+footage)", callback_data="menu_youtube")],
     ]
+
+    if haiku.is_available():
+        buttons.append(
+            [InlineKeyboardButton("YOUTUBE w/ HAIKU (avatar+footage)", callback_data="menu_youtube_haiku")]
+        )
 
     if grok.is_available():
         buttons.append(
@@ -27,6 +32,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mode_map = {
         "menu_short": "short",
         "menu_youtube": "youtube",
+        "menu_youtube_haiku": "youtube_haiku",
         "menu_youtube_grok": "youtube_grok",
     }
 

@@ -2,18 +2,21 @@ import logging
 import os
 from telegram import Update
 from telegram.ext import ContextTypes
-from apis import openai_api, grok, runway, pexels, tts
+from apis import openai_api, grok, haiku, runway, pexels, tts
 from utils.video import composite_video
 
 logger = logging.getLogger(__name__)
 
 
-async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_grok: bool = False):
+async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_grok: bool = False, use_haiku: bool = False):
     topic = context.user_data.get("topic", "")
 
     # 1. Script
-    await query.edit_message_text(text=f"[1/6] Writing {minutes}m script...")
-    if use_grok and grok.is_available():
+    engine = "Haiku" if use_haiku else "Grok" if use_grok else "GPT"
+    await query.edit_message_text(text=f"[1/6] Writing {minutes}m script ({engine})...")
+    if use_haiku and haiku.is_available():
+        script = await haiku.generate_youtube_script(topic, minutes)
+    elif use_grok and grok.is_available():
         script = await grok.generate_youtube_script(topic, minutes)
     else:
         script = await openai_api.generate_youtube_script(topic, minutes)
