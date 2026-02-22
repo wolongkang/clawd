@@ -211,6 +211,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     # Store video info for YouTube upload
     context.user_data["last_video_path"] = output_path
     context.user_data["last_video_topic"] = topic
+    context.user_data["last_video_chapters"] = None
 
     chat_id = query.message.chat_id
 

@@ -139,7 +139,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
         return
 
     # 5. Deliver
-    await _deliver_video(query, context, output_path, topic, full_narration, work_dir, minutes)
+    await _deliver_video(query, context, output_path, topic, full_narration, work_dir, minutes, chapters)
 
 
 async def _handle_legacy(query, context, minutes, topic, work_dir):
@@ -199,11 +199,12 @@ async def _handle_legacy_from_audio(query, context, minutes, topic, work_dir, au
     await _deliver_video(query, context, output_path, topic, script, work_dir, minutes)
 
 
-async def _deliver_video(query, context, output_path, topic, script, work_dir, minutes):
+async def _deliver_video(query, context, output_path, topic, script, work_dir, minutes, chapters=None):
     """Send video to Telegram + offer YouTube upload."""
     context.user_data["last_video_path"] = output_path
     context.user_data["last_video_topic"] = topic
     context.user_data["last_video_script"] = script
+    context.user_data["last_video_chapters"] = chapters
 
     file_size = os.path.getsize(output_path)
     size_mb = file_size / (1024 * 1024)

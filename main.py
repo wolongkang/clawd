@@ -6,7 +6,7 @@ from config import TELEGRAM_BOT_TOKEN
 from commands.start import cmd_start, handle_menu
 from commands import animated_video, youtube_video, tweet_video
 from commands.tweet_video import is_tweet_url
-from apis import youtube_upload
+from apis import haiku, youtube_upload
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -155,28 +155,24 @@ async def handle_youtube_upload(query, context: ContextTypes.DEFAULT_TYPE):
         return
 
     privacy = action  # "public", "unlisted", or "private"
-    await query.edit_message_text(f"Uploading to YouTube ({privacy})...")
+    await query.edit_message_text(f"Generating YouTube metadata + uploading ({privacy})...")
 
-    # Build title and description
-    title = topic[:100]
-    description = (
-        f"{topic}\n\n"
-        f"Generated with OpenClaw Video Bot\n"
-        f"#shorts #ai #generated"
-    )
-
-    # Use script as description if available (for long-form)
+    # Generate optimized metadata with Haiku
     script = context.user_data.get("last_video_script")
-    if script:
-        # Use first 200 words of script as description
-        words = script.split()[:200]
-        description = (
-            f"{topic}\n\n"
-            f"{' '.join(words)}...\n\n"
-            f"Generated with OpenClaw Video Bot"
-        )
+    chapters = context.user_data.get("last_video_chapters")
+    metadata = await haiku.generate_youtube_metadata(topic, script, chapters)
 
-    tags = [t.strip() for t in topic.split() if len(t.strip()) > 2][:10]
+    if metadata:
+        title = metadata.get("title", topic[:100])
+        description = metadata.get("description", "")
+        tags = metadata.get("tags", [])
+        logger.info(f"YouTube metadata generated: '{title}'")
+    else:
+        # Fallback: basic metadata
+        logger.warning("Metadata generation failed, using fallback")
+        title = topic[:100] if not topic.startswith("http") else "AI Generated Video"
+        description = f"{topic}\n\nGenerated with OpenClaw Video Bot"
+        tags = [t.strip() for t in topic.split() if len(t.strip()) > 2 and not t.startswith("http")][:10]
 
     result = await youtube_upload.upload_video(
         file_path=video_path,

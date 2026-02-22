@@ -277,6 +277,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     tweet_short = tweet_text[:100] + "..." if len(tweet_text) > 100 else tweet_text
     context.user_data["last_video_path"] = output_path
     context.user_data["last_video_topic"] = tweet_short
+    context.user_data["last_video_chapters"] = None
 
     chat_id = query.message.chat_id
 
@@ -423,6 +424,7 @@ async def handle_long(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     context.user_data["last_video_path"] = output_path
     context.user_data["last_video_topic"] = tweet_short
     context.user_data["last_video_script"] = full_narration
+    context.user_data["last_video_chapters"] = chapters
 
     chat_id = query.message.chat_id
 

@@ -273,3 +273,79 @@ async def generate_tweet_script_structured(tweet: str, grok_analysis: str, minut
     except Exception as e:
         logger.error(f"Tweet structured script error: {e}")
         return None
+
+
+async def generate_youtube_metadata(topic: str, script: str = None, chapters: list = None) -> dict:
+    """Generate optimized YouTube title, description, and tags from content.
+
+    Returns: {"title": "...", "description": "...", "tags": [...]}
+    """
+    if not ANTHROPIC_API_KEY:
+        return None
+
+    try:
+        # Build context from available content
+        context_parts = [f"TOPIC/SOURCE: {topic}"]
+        if script:
+            context_parts.append(f"SCRIPT (first 1500 chars): {script[:1500]}")
+        if chapters:
+            ch_titles = [ch.get("title", "") for ch in chapters if ch.get("title")]
+            context_parts.append(f"CHAPTERS: {', '.join(ch_titles)}")
+
+        content_context = "\n\n".join(context_parts)
+
+        prompt = (
+            f"Generate optimized YouTube metadata for this video:\n\n"
+            f"{content_context}\n\n"
+            f"Return ONLY valid JSON with these fields:\n"
+            f"1. \"title\" - Catchy, clickable YouTube title. Under 70 characters. "
+            f"Use power words, numbers, or curiosity gaps. Do NOT use the raw URL as title. "
+            f"Make it compelling and descriptive of the actual video content.\n"
+            f"2. \"description\" - YouTube description (1000-2000 chars). Structure:\n"
+            f"   - First line: compelling hook (this shows in search results)\n"
+            f"   - Empty line\n"
+            f"   - 2-3 sentence summary of what viewers will learn\n"
+            f"   - Empty line\n"
+            f"   - Key topics covered as bullet points\n"
+            f"   - Empty line\n"
+            f"   - 5 relevant hashtags\n"
+            f"   - Last line: Generated with OpenClaw Video Bot\n"
+            f"3. \"tags\" - Array of 10-15 YouTube SEO tags. Mix of:\n"
+            f"   - Broad terms (2-3 words)\n"
+            f"   - Specific long-tail keywords (3-5 words)\n"
+            f"   - Related trending terms\n\n"
+            f"Return ONLY the JSON. No markdown, no explanation."
+        )
+
+        result = _call_haiku(prompt, max_tokens=1500)
+        if not result:
+            return None
+
+        result = result.strip()
+        if result.startswith("```"):
+            result = result.split("```")[1]
+            if result.startswith("json"):
+                result = result[4:]
+        data = json.loads(result)
+
+        if not isinstance(data, dict) or "title" not in data:
+            logger.error(f"Invalid metadata format: {str(data)[:200]}")
+            return None
+
+        # Ensure title isn't too long
+        if len(data.get("title", "")) > 100:
+            data["title"] = data["title"][:97] + "..."
+
+        # Ensure tags is a list
+        if not isinstance(data.get("tags"), list):
+            data["tags"] = []
+
+        logger.info(f"YouTube metadata: title='{data['title']}', tags={len(data.get('tags', []))}")
+        return data
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse metadata JSON: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Metadata generation error: {e}")
+        return None
