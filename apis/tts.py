@@ -37,7 +37,7 @@ async def generate_speech(text: str, target_minutes: int = 0) -> bytes:
                 },
                 json={
                     "text": chunk,
-                    "model_id": "eleven_monolingual_v1",
+                    "model_id": "eleven_multilingual_v2",
                     "voice_settings": {
                         "stability": 0.5,
                         "similarity_boost": 0.75,
