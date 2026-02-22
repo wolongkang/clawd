@@ -1,9 +1,11 @@
 import logging
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from config import TELEGRAM_BOT_TOKEN
 from commands.start import cmd_start, handle_menu
 from commands import animated_video, youtube_video
+from apis import youtube_upload
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -58,13 +60,73 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         minutes = int(data.split("_")[1])
         await youtube_video.handle(query, context, minutes)
 
+    elif data.startswith("ytup_"):
+        await handle_youtube_upload(query, context)
+
+
+async def handle_youtube_upload(query, context: ContextTypes.DEFAULT_TYPE):
+    """Handle YouTube upload button press."""
+    action = query.data.replace("ytup_", "")
+
+    if action == "skip":
+        await query.edit_message_text("YouTube upload skipped.")
+        return
+
+    video_path = context.user_data.get("last_video_path")
+    topic = context.user_data.get("last_video_topic", "Video")
+
+    if not video_path or not os.path.exists(video_path):
+        await query.edit_message_text("Video file not found. Generate a video first.")
+        return
+
+    privacy = action  # "private" or "unlisted"
+    await query.edit_message_text(f"Uploading to YouTube ({privacy})...")
+
+    # Build title and description
+    title = topic[:100]
+    description = (
+        f"{topic}\n\n"
+        f"Generated with OpenClaw Video Bot\n"
+        f"#shorts #ai #generated"
+    )
+
+    # Use script as description if available (for long-form)
+    script = context.user_data.get("last_video_script")
+    if script:
+        # Use first 200 words of script as description
+        words = script.split()[:200]
+        description = (
+            f"{topic}\n\n"
+            f"{' '.join(words)}...\n\n"
+            f"Generated with OpenClaw Video Bot"
+        )
+
+    tags = [t.strip() for t in topic.split() if len(t.strip()) > 2][:10]
+
+    result = await youtube_upload.upload_video(
+        file_path=video_path,
+        title=title,
+        description=description,
+        tags=tags,
+        privacy=privacy,
+    )
+
+    if result:
+        await query.edit_message_text(
+            f"Uploaded to YouTube!\n"
+            f"{result['url']}\n"
+            f"Status: {result['privacy']}"
+        )
+    else:
+        await query.edit_message_text("YouTube upload failed. Check logs.")
+
 
 def main():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_menu, pattern="^menu_"))
-    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|yt_)"))
+    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|yt_|ytup_)"))
     logger.info("OpenClaw Bot starting...")
     app.run_polling()
 

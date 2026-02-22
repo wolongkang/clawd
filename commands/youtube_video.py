@@ -1,8 +1,8 @@
 import logging
 import os
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from apis import haiku, openai_api, pexels, tts
+from apis import haiku, openai_api, pexels, tts, youtube_upload
 from utils.video import composite_video
 
 logger = logging.getLogger(__name__)
@@ -60,23 +60,45 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
         context.user_data["mode"] = None
         return
 
-    # Upload
+    # Store video info for YouTube upload
+    context.user_data["last_video_path"] = output_path
+    context.user_data["last_video_topic"] = topic
+    context.user_data["last_video_script"] = script
+
     file_size = os.path.getsize(output_path)
     size_mb = file_size / (1024 * 1024)
-    await query.edit_message_text(f"Uploading {size_mb:.0f}MB video...")
 
-    # Telegram limit is 50MB for bots
-    if file_size > 50 * 1024 * 1024:
-        await query.edit_message_text(
-            f"Video is {size_mb:.0f}MB which exceeds Telegram's 50MB limit.\n"
-            f"The video was saved on the server at:\n{output_path}"
-        )
-    else:
+    # Send to Telegram first
+    if file_size <= 50 * 1024 * 1024:
+        await query.edit_message_text(f"Uploading {size_mb:.0f}MB to Telegram...")
         with open(output_path, "rb") as f:
             await query.message.reply_video(
                 video=f.read(),
-                caption=f"{minutes}m YouTube Video - Ready to upload!",
+                caption=f"{minutes}m YouTube Video - {topic}",
             )
         await query.delete()
+    else:
+        await query.edit_message_text(
+            f"Video is {size_mb:.0f}MB (exceeds Telegram 50MB limit).\n"
+            f"Saved at: {output_path}"
+        )
+
+    # Offer YouTube upload if configured
+    if youtube_upload.is_available():
+        keyboard = [
+            [
+                InlineKeyboardButton("Upload to YouTube (private)", callback_data="ytup_private"),
+                InlineKeyboardButton("Upload (unlisted)", callback_data="ytup_unlisted"),
+            ],
+            [InlineKeyboardButton("Skip YouTube upload", callback_data="ytup_skip")],
+        ]
+        await query.message.reply_text(
+            f"Upload to YouTube?\n({size_mb:.0f}MB, {topic})",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+    else:
+        await query.message.reply_text(
+            "YouTube upload not configured. Run youtube_auth.py to set it up."
+        )
 
     context.user_data["mode"] = None
