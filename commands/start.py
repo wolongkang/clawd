@@ -4,8 +4,8 @@ from telegram.ext import ContextTypes
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons = [
-        [InlineKeyboardButton("SHORT VIDEO (5-10s)", callback_data="menu_short")],
-        [InlineKeyboardButton("YOUTUBE VIDEO (avatar+footage)", callback_data="menu_youtube")],
+        [InlineKeyboardButton("ANIMATED SHORT (Veo 3.1)", callback_data="menu_animated")],
+        [InlineKeyboardButton("YOUTUBE VIDEO (long-form)", callback_data="menu_youtube")],
     ]
 
     await update.message.reply_text(
@@ -19,7 +19,7 @@ async def handle_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     mode_map = {
-        "menu_short": "short",
+        "menu_animated": "animated",
         "menu_youtube": "youtube",
     }
 
