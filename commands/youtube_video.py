@@ -34,18 +34,18 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     with open(audio_path, "wb") as f:
         f.write(audio)
 
-    # 3. Avatar
+    # 3. Avatar (optional — continues without if Runway fails/no credits)
+    avatar_url = None
     await query.edit_message_text(f"[3/6] Creating avatar presenter...")
     avatar_task = await runway.create_avatar(topic)
-    if not avatar_task:
-        await query.edit_message_text("Avatar creation failed.")
-        return
+    if avatar_task:
+        await query.edit_message_text("[3/6] Rendering avatar (takes a few minutes)...")
+        avatar_url = await runway.poll_avatar(avatar_task)
 
-    await query.edit_message_text("[3/6] Rendering avatar (takes a few minutes)...")
-    avatar_url = await runway.poll_avatar(avatar_task)
-    if not avatar_url:
-        await query.edit_message_text("Avatar rendering failed.")
-        return
+    if avatar_url:
+        await query.edit_message_text("[3/6] Avatar ready!")
+    else:
+        await query.edit_message_text("[3/6] Avatar skipped (no credits) — using footage only")
 
     # 4. Background footage (keywords extracted via OpenAI — cheap for this)
     await query.edit_message_text("[4/6] Finding background footage...")

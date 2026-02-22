@@ -148,40 +148,54 @@ def composite_video(
         logger.error("Background concatenation failed")
         return False
 
-    # Download avatar
+    # Download avatar (if available)
+    has_avatar = False
     av_file = os.path.join(TMP, "avatar.mp4")
-    if not _download(avatar_url, av_file):
-        logger.error("Avatar download failed")
-        return False
+    if avatar_url:
+        if _download(avatar_url, av_file):
+            avatar_dur = get_duration(av_file)
+            logger.info(f"Avatar clip: {avatar_dur:.1f}s (will loop as PIP)")
+            has_avatar = avatar_dur > 0
+        else:
+            logger.warning("Avatar download failed, continuing without avatar")
+    else:
+        logger.info("No avatar URL provided, compositing without PIP")
 
-    avatar_dur = get_duration(av_file)
-    logger.info(f"Avatar clip: {avatar_dur:.1f}s (will loop as PIP)")
-
-    # Final composite:
-    # - Background fills the full duration (already trimmed to audio length)
-    # - Avatar loops as PIP in bottom-right corner (scaled to 25% of frame)
-    # - Audio is the master track
-    # - Avatar fades in/out every cycle for polish
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", bg_full,                     # input 0: background (full duration)
-        "-stream_loop", "-1", "-i", av_file, # input 1: avatar (looped infinitely)
-        "-i", audio_path,                   # input 2: audio
-        "-filter_complex",
-        (
-            # Scale avatar to PIP size (320x180) and add slight transparency
-            "[1:v]scale=320:180,format=yuva420p,colorchannelmixer=aa=0.9[pip];"
-            # Overlay PIP on background, bottom-right with 20px margin
-            "[0:v][pip]overlay=W-w-20:H-h-20:shortest=1[outv]"
-        ),
-        "-map", "[outv]",                  # use composited video
-        "-map", "2:a",                     # use audio from input 2
-        "-t", str(audio_dur),              # trim to audio duration
-        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart",
-        output_path,
-    ]
+    # Final composite
+    if has_avatar:
+        # Background + avatar PIP + audio
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", bg_full,                     # input 0: background
+            "-stream_loop", "-1", "-i", av_file, # input 1: avatar (looped)
+            "-i", audio_path,                   # input 2: audio
+            "-filter_complex",
+            (
+                "[1:v]scale=320:180,format=yuva420p,colorchannelmixer=aa=0.9[pip];"
+                "[0:v][pip]overlay=W-w-20:H-h-20:shortest=1[outv]"
+            ),
+            "-map", "[outv]",
+            "-map", "2:a",
+            "-t", str(audio_dur),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            output_path,
+        ]
+    else:
+        # Background + audio only (no avatar)
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", bg_full,
+            "-i", audio_path,
+            "-map", "0:v",
+            "-map", "1:a",
+            "-t", str(audio_dur),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            output_path,
+        ]
 
     success = _run_ffmpeg(cmd, timeout=900)  # 15 min timeout for long videos
     if success:
