@@ -6,12 +6,6 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-TMP = "/tmp/videobot"
-
-
-def _ensure_tmp():
-    os.makedirs(TMP, exist_ok=True)
-
 
 def _download(url: str, path: str) -> bool:
     try:
@@ -63,22 +57,21 @@ def _run_ffmpeg(cmd: list, timeout: int = 600) -> bool:
         return False
 
 
-def _download_clips(urls: list[str]) -> list[str]:
+def _download_clips(urls: list[str], work_dir: str) -> list[str]:
     """Download multiple clips, return list of local paths."""
     paths = []
     for i, url in enumerate(urls):
-        path = os.path.join(TMP, f"clip_{i}.mp4")
+        path = os.path.join(work_dir, f"clip_{i}.mp4")
         if _download(url, path):
             paths.append(path)
     return paths
 
 
-def _concat_clips(clip_paths: list[str], target_duration: float, output_path: str) -> bool:
+def _concat_clips(clip_paths: list[str], target_duration: float, output_path: str, work_dir: str) -> bool:
     """Concatenate and loop clips to fill target_duration."""
     if not clip_paths:
         return False
 
-    # Get total duration of all clips
     durations = [get_duration(p) for p in clip_paths]
     total = sum(durations)
 
@@ -86,8 +79,7 @@ def _concat_clips(clip_paths: list[str], target_duration: float, output_path: st
         logger.error("All clips have zero duration")
         return False
 
-    # Build concat list, repeating clips until we exceed target duration
-    concat_file = os.path.join(TMP, "concat.txt")
+    concat_file = os.path.join(work_dir, "concat.txt")
     accumulated = 0.0
     with open(concat_file, "w") as f:
         while accumulated < target_duration:
@@ -101,7 +93,6 @@ def _concat_clips(clip_paths: list[str], target_duration: float, output_path: st
 
     logger.info(f"Concat list: {accumulated:.1f}s of clips to fill {target_duration:.1f}s target")
 
-    # Concatenate all clips
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat", "-safe", "0",
@@ -125,10 +116,11 @@ def composite_video(
     """
     Composite a full YouTube video:
     1. Concatenate background clips to match audio duration
-    2. Overlay avatar as picture-in-picture (looped, bottom-right corner)
-    3. Mix in audio track
+    2. Mix in audio track
     """
-    _ensure_tmp()
+    # Use output_path's directory as work dir
+    work_dir = os.path.dirname(output_path)
+    os.makedirs(work_dir, exist_ok=True)
 
     # Get audio duration — this is the master length
     audio_dur = get_duration(audio_path)
@@ -138,66 +130,31 @@ def composite_video(
     logger.info(f"Master audio duration: {audio_dur:.1f}s ({audio_dur / 60:.1f} min)")
 
     # Download and concatenate background clips
-    clip_paths = _download_clips(background_urls)
+    clip_paths = _download_clips(background_urls, work_dir)
     if not clip_paths:
         logger.error("No background clips downloaded")
         return False
 
-    bg_full = os.path.join(TMP, "bg_full.mp4")
-    if not _concat_clips(clip_paths, audio_dur, bg_full):
+    bg_full = os.path.join(work_dir, "bg_full.mp4")
+    if not _concat_clips(clip_paths, audio_dur, bg_full, work_dir):
         logger.error("Background concatenation failed")
         return False
 
-    # Download avatar (if available)
-    has_avatar = False
-    av_file = os.path.join(TMP, "avatar.mp4")
-    if avatar_url:
-        if _download(avatar_url, av_file):
-            avatar_dur = get_duration(av_file)
-            logger.info(f"Avatar clip: {avatar_dur:.1f}s (will loop as PIP)")
-            has_avatar = avatar_dur > 0
-        else:
-            logger.warning("Avatar download failed, continuing without avatar")
-    else:
-        logger.info("No avatar URL provided, compositing without PIP")
+    # Background + audio only
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", bg_full,
+        "-i", audio_path,
+        "-map", "0:v",
+        "-map", "1:a",
+        "-t", str(audio_dur),
+        "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart",
+        output_path,
+    ]
 
-    # Final composite
-    if has_avatar:
-        # Background + avatar PIP + audio
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", bg_full,                     # input 0: background
-            "-stream_loop", "-1", "-i", av_file, # input 1: avatar (looped)
-            "-i", audio_path,                   # input 2: audio
-            "-filter_complex",
-            (
-                "[1:v]scale=320:180,format=yuva420p,colorchannelmixer=aa=0.9[pip];"
-                "[0:v][pip]overlay=W-w-20:H-h-20:shortest=1[outv]"
-            ),
-            "-map", "[outv]",
-            "-map", "2:a",
-            "-t", str(audio_dur),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            output_path,
-        ]
-    else:
-        # Background + audio only (no avatar)
-        cmd = [
-            "ffmpeg", "-y",
-            "-i", bg_full,
-            "-i", audio_path,
-            "-map", "0:v",
-            "-map", "1:a",
-            "-t", str(audio_dur),
-            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart",
-            output_path,
-        ]
-
-    success = _run_ffmpeg(cmd, timeout=900)  # 15 min timeout for long videos
+    success = _run_ffmpeg(cmd, timeout=900)
     if success:
         final_dur = get_duration(output_path)
         size_mb = os.path.getsize(output_path) / (1024 * 1024)

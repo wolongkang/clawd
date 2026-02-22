@@ -7,15 +7,41 @@ from utils.video import composite_video
 
 logger = logging.getLogger(__name__)
 
+TMP_BASE = "/tmp/videobot/youtube"
+
+
+def _get_work_dir(user_id: int) -> str:
+    """Get a unique working directory per user to avoid file conflicts."""
+    path = os.path.join(TMP_BASE, str(user_id))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _cleanup(work_dir: str, keep_final: str = None):
+    """Clean up temp files after upload. Keep final video if YouTube upload pending."""
+    try:
+        for f in os.listdir(work_dir):
+            fpath = os.path.join(work_dir, f)
+            if keep_final and os.path.abspath(fpath) == os.path.abspath(keep_final):
+                continue
+            if os.path.isfile(fpath):
+                os.remove(fpath)
+        logger.info(f"Cleaned up {work_dir}")
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
+
 
 async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     topic = context.user_data.get("topic", "")
+    user_id = query.from_user.id
+    work_dir = _get_work_dir(user_id)
 
     # 1. Script (Haiku only)
     await query.edit_message_text(text=f"[1/4] Writing {minutes}m script (Haiku)...")
     script = await haiku.generate_youtube_script(topic, minutes)
     if not script:
         await query.edit_message_text("Script generation failed.")
+        context.user_data["mode"] = None
         return
 
     word_count = len(script.split())
@@ -26,11 +52,10 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     audio = await tts.generate_speech(script, target_minutes=minutes)
     if not audio:
         await query.edit_message_text("Audio generation failed.")
+        context.user_data["mode"] = None
         return
 
-    # Save audio to disk (needed for ffmpeg)
-    audio_path = "/tmp/videobot/audio.mp3"
-    os.makedirs("/tmp/videobot", exist_ok=True)
+    audio_path = os.path.join(work_dir, "audio.mp3")
     with open(audio_path, "wb") as f:
         f.write(audio)
 
@@ -45,6 +70,8 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
         footage_urls = await pexels.get_footage(topic, count=5)
     if not footage_urls:
         await query.edit_message_text("Could not find background footage.")
+        context.user_data["mode"] = None
+        _cleanup(work_dir)
         return
 
     await query.edit_message_text(f"[3/4] Got {len(footage_urls)} background clips")
@@ -52,12 +79,13 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     # 4. Composite (footage + audio, no avatar)
     await query.edit_message_text("[4/4] Compositing video (this takes a while)...")
 
-    output_path = "/tmp/videobot/final_video.mp4"
+    output_path = os.path.join(work_dir, "final_video.mp4")
     success = composite_video(footage_urls, None, audio_path, output_path)
 
     if not success or not os.path.exists(output_path):
         await query.edit_message_text("Video composition failed.")
         context.user_data["mode"] = None
+        _cleanup(work_dir)
         return
 
     # Store video info for YouTube upload
@@ -82,6 +110,9 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
             f"Video is {size_mb:.0f}MB (exceeds Telegram 50MB limit).\n"
             f"Saved at: {output_path}"
         )
+
+    # Clean up temp files (keep final for YouTube upload)
+    _cleanup(work_dir, keep_final=output_path)
 
     # Offer YouTube upload if configured
     if youtube_upload.is_available():

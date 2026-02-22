@@ -70,6 +70,13 @@ async def handle_youtube_upload(query, context: ContextTypes.DEFAULT_TYPE):
 
     if action == "skip":
         await query.edit_message_text("YouTube upload skipped.")
+        # Clean up final video file
+        video_path = context.user_data.get("last_video_path")
+        if video_path and os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+            except Exception:
+                pass
         return
 
     video_path = context.user_data.get("last_video_path")
@@ -79,7 +86,7 @@ async def handle_youtube_upload(query, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("Video file not found. Generate a video first.")
         return
 
-    privacy = action  # "private" or "unlisted"
+    privacy = action  # "public", "unlisted", or "private"
     await query.edit_message_text(f"Uploading to YouTube ({privacy})...")
 
     # Build title and description
@@ -110,6 +117,13 @@ async def handle_youtube_upload(query, context: ContextTypes.DEFAULT_TYPE):
         tags=tags,
         privacy=privacy,
     )
+
+    # Clean up final video file after upload attempt
+    if video_path and os.path.exists(video_path):
+        try:
+            os.remove(video_path)
+        except Exception:
+            pass
 
     if result:
         await query.edit_message_text(

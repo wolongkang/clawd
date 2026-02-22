@@ -1,14 +1,38 @@
 import logging
 import os
+import shutil
 import subprocess
+import json
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from apis import fal_api, haiku, youtube_upload
+from apis.haiku import _call_haiku
 
 logger = logging.getLogger(__name__)
 
-TMP = "/tmp/videobot/animated"
+TMP_BASE = "/tmp/videobot/animated"
+
+
+def _get_work_dir(user_id: int) -> str:
+    """Get a unique working directory per user to avoid file conflicts."""
+    path = os.path.join(TMP_BASE, str(user_id))
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _cleanup(work_dir: str, keep_final: str = None):
+    """Clean up temp files after upload. Keep final video if YouTube upload pending."""
+    try:
+        for f in os.listdir(work_dir):
+            fpath = os.path.join(work_dir, f)
+            if keep_final and os.path.abspath(fpath) == os.path.abspath(keep_final):
+                continue
+            if os.path.isfile(fpath):
+                os.remove(fpath)
+        logger.info(f"Cleaned up {work_dir}")
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
 
 
 def _download(url: str, path: str) -> bool:
@@ -53,20 +77,13 @@ Return ONLY valid JSON array. No markdown, no explanation. Example format:
   }}
 ]"""
 
-    script = await haiku.generate_youtube_script.__wrapped__(topic, 1) if False else None
-    # Use haiku directly
-    from apis.haiku import _call_haiku
     result = _call_haiku(prompt, max_tokens=3000)
     if not result:
         return None
 
-    # Parse JSON from response
-    import json
     try:
-        # Try to find JSON array in the response
         result = result.strip()
         if result.startswith("```"):
-            # Remove markdown code blocks
             result = result.split("```")[1]
             if result.startswith("json"):
                 result = result[4:]
@@ -83,7 +100,8 @@ Return ONLY valid JSON array. No markdown, no explanation. Example format:
 async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     """Handle animated short-form video generation."""
     topic = context.user_data.get("topic", "")
-    os.makedirs(TMP, exist_ok=True)
+    user_id = query.from_user.id
+    work_dir = _get_work_dir(user_id)
 
     # 1. Generate scene prompts with Haiku
     await query.edit_message_text(f"[1/4] Writing {scene_count} scene prompts...")
@@ -112,7 +130,6 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
             context.user_data["mode"] = None
             return
         image_urls.append(url)
-        # Use first image as reference for consistency
         if i == 0:
             ref_url = url
 
@@ -139,23 +156,23 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     # 4. Download, trim, and assemble
     await query.edit_message_text("[4/4] Assembling final video...")
 
-    # Download all clips
     clip_paths = []
     for i, url in enumerate(video_urls):
-        path = os.path.join(TMP, f"raw_{i:02d}.mp4")
+        path = os.path.join(work_dir, f"raw_{i:02d}.mp4")
         if _download(url, path):
             clip_paths.append(path)
         else:
             await query.edit_message_text(f"Failed to download clip {i+1}.")
             context.user_data["mode"] = None
+            _cleanup(work_dir)
             return
 
     # Trim each clip (remove last second to avoid AI artifacts)
     trimmed_paths = []
     for i, path in enumerate(clip_paths):
         dur = scenes[i].get("duration", "8s")
-        trim_seconds = int(dur.replace("s", "")) - 1  # Remove last second
-        trim_path = os.path.join(TMP, f"trim_{i:02d}.mp4")
+        trim_seconds = int(dur.replace("s", "")) - 1
+        trim_path = os.path.join(work_dir, f"trim_{i:02d}.mp4")
         result = subprocess.run(
             ["ffmpeg", "-y", "-i", path, "-t", str(trim_seconds),
              "-c:v", "libx264", "-c:a", "aac", trim_path],
@@ -165,15 +182,15 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
             trimmed_paths.append(trim_path)
         else:
             logger.error(f"Trim failed for clip {i}: {result.stderr.decode()[-300:]}")
-            trimmed_paths.append(path)  # Use untrimmed as fallback
+            trimmed_paths.append(path)
 
     # Concatenate
-    concat_file = os.path.join(TMP, "concat.txt")
+    concat_file = os.path.join(work_dir, "concat.txt")
     with open(concat_file, "w") as f:
         for p in trimmed_paths:
             f.write(f"file '{os.path.abspath(p)}'\n")
 
-    output_path = os.path.join(TMP, "final.mp4")
+    output_path = os.path.join(work_dir, "final.mp4")
     result = subprocess.run(
         ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", concat_file,
          "-c:v", "libx264", "-c:a", "aac", "-movflags", "+faststart", output_path],
@@ -184,9 +201,9 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
         logger.error(f"Concat failed: {result.stderr.decode()[-300:]}")
         await query.edit_message_text("Video assembly failed.")
         context.user_data["mode"] = None
+        _cleanup(work_dir)
         return
 
-    # Upload
     file_size = os.path.getsize(output_path)
     size_mb = file_size / (1024 * 1024)
     await query.edit_message_text(f"Uploading {size_mb:.1f}MB video...")
@@ -207,6 +224,9 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
             f"Video is {size_mb:.0f}MB — exceeds Telegram's 50MB limit.\n"
             f"Saved on server: {output_path}"
         )
+
+    # Clean up temp files (keep final for YouTube upload)
+    _cleanup(work_dir, keep_final=output_path)
 
     # Offer YouTube upload if configured
     if youtube_upload.is_available():
