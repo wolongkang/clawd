@@ -96,11 +96,14 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     file_size = os.path.getsize(output_path)
     size_mb = file_size / (1024 * 1024)
 
+    chat_id = query.message.chat_id
+
     # Send to Telegram first
     if file_size <= 50 * 1024 * 1024:
         await query.edit_message_text(f"Uploading {size_mb:.0f}MB to Telegram...")
         with open(output_path, "rb") as f:
-            await query.message.reply_video(
+            await context.bot.send_video(
+                chat_id=chat_id,
                 video=f.read(),
                 caption=f"{minutes}m YouTube Video - {topic}",
             )
@@ -122,13 +125,15 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
              InlineKeyboardButton("Private", callback_data="ytup_private")],
             [InlineKeyboardButton("Skip", callback_data="ytup_skip")],
         ]
-        await query.message.reply_text(
-            f"Upload to YouTube?\n({size_mb:.0f}MB, {topic})",
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Upload to YouTube?\n({size_mb:.0f}MB, {topic})",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
     else:
-        await query.message.reply_text(
-            "YouTube upload not configured. Run youtube_auth.py to set it up."
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="YouTube upload not configured. Run youtube_auth.py to set it up.",
         )
 
     context.user_data["mode"] = None

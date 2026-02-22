@@ -4,7 +4,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 from config import TELEGRAM_BOT_TOKEN
 from commands.start import cmd_start, handle_menu
-from commands import animated_video, youtube_video
+from commands import animated_video, youtube_video, tweet_video
+from commands.tweet_video import is_tweet_url
 from apis import youtube_upload
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -12,13 +13,34 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
     mode = context.user_data.get("mode")
+
+    # Auto-detect tweet URLs — skip menu, go straight to scene count
+    if not mode and is_tweet_url(text):
+        context.user_data["mode"] = "tweet"
+        context.user_data["topic"] = text
+        keyboard = [
+            [
+                InlineKeyboardButton("3 scenes (~21s)", callback_data="tweet_3"),
+                InlineKeyboardButton("4 scenes (~28s)", callback_data="tweet_4"),
+            ],
+            [
+                InlineKeyboardButton("5 scenes (~35s)", callback_data="tweet_5"),
+                InlineKeyboardButton("6 scenes (~42s)", callback_data="tweet_6"),
+            ],
+        ]
+        await update.message.reply_text(
+            "Tweet detected! How many scenes?",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+        return
 
     if not mode:
         await cmd_start(update, context)
         return
 
-    context.user_data["topic"] = update.message.text
+    context.user_data["topic"] = text
 
     if mode == "animated":
         keyboard = [
@@ -29,6 +51,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [
                 InlineKeyboardButton("5 scenes (~35s)", callback_data="anim_5"),
                 InlineKeyboardButton("6 scenes (~42s)", callback_data="anim_6"),
+            ],
+        ]
+        await update.message.reply_text("How many scenes?", reply_markup=InlineKeyboardMarkup(keyboard))
+
+    elif mode == "tweet":
+        keyboard = [
+            [
+                InlineKeyboardButton("3 scenes (~21s)", callback_data="tweet_3"),
+                InlineKeyboardButton("4 scenes (~28s)", callback_data="tweet_4"),
+            ],
+            [
+                InlineKeyboardButton("5 scenes (~35s)", callback_data="tweet_5"),
+                InlineKeyboardButton("6 scenes (~42s)", callback_data="tweet_6"),
             ],
         ]
         await update.message.reply_text("How many scenes?", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -55,6 +90,10 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("anim_"):
         scene_count = int(data.split("_")[1])
         await animated_video.handle(query, context, scene_count)
+
+    elif data.startswith("tweet_"):
+        scene_count = int(data.split("_")[1])
+        await tweet_video.handle(query, context, scene_count)
 
     elif data.startswith("yt_"):
         minutes = int(data.split("_")[1])
@@ -140,7 +179,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(CallbackQueryHandler(handle_menu, pattern="^menu_"))
-    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|yt_|ytup_)"))
+    app.add_handler(CallbackQueryHandler(handle_button, pattern="^(anim_|tweet_|yt_|ytup_)"))
     logger.info("OpenClaw Bot starting...")
     app.run_polling()
 
