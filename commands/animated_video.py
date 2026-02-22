@@ -211,10 +211,9 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     # Offer YouTube upload if configured
     if youtube_upload.is_available():
         keyboard = [
-            [
-                InlineKeyboardButton("Upload to YouTube (private)", callback_data="ytup_private"),
-                InlineKeyboardButton("Upload (unlisted)", callback_data="ytup_unlisted"),
-            ],
+            [InlineKeyboardButton("Public", callback_data="ytup_public"),
+             InlineKeyboardButton("Unlisted", callback_data="ytup_unlisted"),
+             InlineKeyboardButton("Private", callback_data="ytup_private")],
             [InlineKeyboardButton("Skip", callback_data="ytup_skip")],
         ]
         await query.message.reply_text(
