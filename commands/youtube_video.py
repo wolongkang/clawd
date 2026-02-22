@@ -2,24 +2,18 @@ import logging
 import os
 from telegram import Update
 from telegram.ext import ContextTypes
-from apis import openai_api, grok, haiku, runway, pexels, tts
+from apis import haiku, openai_api, runway, pexels, tts
 from utils.video import composite_video
 
 logger = logging.getLogger(__name__)
 
 
-async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_grok: bool = False, use_haiku: bool = False):
+async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     topic = context.user_data.get("topic", "")
 
-    # 1. Script
-    engine = "Haiku" if use_haiku else "Grok" if use_grok else "GPT"
-    await query.edit_message_text(text=f"[1/6] Writing {minutes}m script ({engine})...")
-    if use_haiku and haiku.is_available():
-        script = await haiku.generate_youtube_script(topic, minutes)
-    elif use_grok and grok.is_available():
-        script = await grok.generate_youtube_script(topic, minutes)
-    else:
-        script = await openai_api.generate_youtube_script(topic, minutes)
+    # 1. Script (Haiku only)
+    await query.edit_message_text(text=f"[1/6] Writing {minutes}m script (Haiku)...")
+    script = await haiku.generate_youtube_script(topic, minutes)
     if not script:
         await query.edit_message_text("Script generation failed.")
         return
@@ -27,8 +21,8 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_gr
     word_count = len(script.split())
     await query.edit_message_text(f"[1/6] Script ready: {word_count} words (~{word_count // 150}m)")
 
-    # 2. Audio (from script)
-    await query.edit_message_text(f"[2/6] Generating audio from script...")
+    # 2. Audio (ElevenLabs)
+    await query.edit_message_text(f"[2/6] Generating audio (ElevenLabs)...")
     audio = await tts.generate_speech(script, target_minutes=minutes)
     if not audio:
         await query.edit_message_text("Audio generation failed.")
@@ -40,7 +34,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_gr
     with open(audio_path, "wb") as f:
         f.write(audio)
 
-    # 3. Avatar (runs in parallel concept — but sequentially here for status updates)
+    # 3. Avatar
     await query.edit_message_text(f"[3/6] Creating avatar presenter...")
     avatar_task = await runway.create_avatar(topic)
     if not avatar_task:
@@ -53,16 +47,14 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int, use_gr
         await query.edit_message_text("Avatar rendering failed.")
         return
 
-    # 4. Background footage (multiple clips from script keywords)
+    # 4. Background footage (keywords extracted via OpenAI — cheap for this)
     await query.edit_message_text("[4/6] Finding background footage...")
     keywords = await openai_api.extract_video_keywords(script, count=6)
     if not keywords:
-        keywords = [topic]  # Fallback to just the topic
+        keywords = [topic]
 
-    # Fetch enough clips to fill the video (~2 clips per keyword)
     footage_urls = await pexels.get_footage_for_script(keywords, clips_per_keyword=2)
     if not footage_urls:
-        # Fallback: try with just the topic
         footage_urls = await pexels.get_footage(topic, count=5)
     if not footage_urls:
         await query.edit_message_text("Could not find background footage.")

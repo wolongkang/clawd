@@ -25,7 +25,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_text("Duration?", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    elif mode in ("youtube", "youtube_grok", "youtube_haiku"):
+    elif mode == "youtube":
         keyboard = [
             [
                 InlineKeyboardButton("5 min", callback_data="yt_5"),
@@ -50,10 +50,7 @@ async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("yt_"):
         minutes = int(data.split("_")[1])
-        mode = context.user_data.get("mode", "")
-        use_grok = mode == "youtube_grok"
-        use_haiku = mode == "youtube_haiku"
-        await youtube_video.handle(query, context, minutes, use_grok=use_grok, use_haiku=use_haiku)
+        await youtube_video.handle(query, context, minutes)
 
 
 def main():
