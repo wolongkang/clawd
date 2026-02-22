@@ -53,6 +53,34 @@ async def generate_image(prompt: str, ref_url: str = None) -> str:
         return None
 
 
+async def generate_slide(prompt: str) -> str:
+    """Generate a 16:9 landscape slide image for YouTube video. Returns image URL."""
+    if not FAL_KEY:
+        return None
+
+    try:
+        logger.info(f"Generating slide (1280x720) via nano-banana-pro...")
+        result = fal_client.subscribe(
+            "fal-ai/nano-banana-pro",
+            arguments={
+                "prompt": prompt,
+                "image_size": {"width": 1280, "height": 720},
+            },
+        )
+
+        if result and "images" in result and result["images"]:
+            url = result["images"][0]["url"]
+            logger.info(f"Slide generated: {url[:80]}...")
+            return url
+
+        logger.error(f"No image in slide result: {result}")
+        return None
+
+    except Exception as e:
+        logger.error(f"Slide generation error: {e}")
+        return None
+
+
 def _sanitize_prompt(prompt: str) -> str:
     """Use Haiku to rewrite a prompt that was flagged by content moderation."""
     sanitized = _call_haiku(

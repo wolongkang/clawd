@@ -277,13 +277,16 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
     context.user_data["last_video_path"] = output_path
     context.user_data["last_video_topic"] = tweet_short
 
+    chat_id = query.message.chat_id
+
     if file_size <= 50 * 1024 * 1024:
         with open(output_path, "rb") as f:
-            await query.message.reply_video(
+            await context.bot.send_video(
+                chat_id=chat_id,
                 video=f.read(),
                 caption=f"Tweet Video — {tweet_short}",
             )
-        await query.delete()
+        await query.delete_message()
     else:
         await query.edit_message_text(
             f"Video is {size_mb:.0f}MB — exceeds Telegram's 50MB limit.\n"
@@ -301,8 +304,9 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
              InlineKeyboardButton("Private", callback_data="ytup_private")],
             [InlineKeyboardButton("Skip", callback_data="ytup_skip")],
         ]
-        await query.message.reply_text(
-            f"Upload to YouTube?\n({size_mb:.0f}MB)",
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Upload to YouTube?\n({size_mb:.0f}MB)",
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 

@@ -24,7 +24,7 @@ async def generate_speech(text: str, target_minutes: int = 0) -> bytes:
             logger.warning(f"Audio likely much longer than {target_minutes}m target")
 
     try:
-        chunks = _split_text(text, max_chars=4500)
+        chunks = _split_text(text, max_chars=8000)
         all_audio = io.BytesIO()
 
         for i, chunk in enumerate(chunks):
@@ -39,7 +39,7 @@ async def generate_speech(text: str, target_minutes: int = 0) -> bytes:
                     "text": chunk,
                     "model_id": "eleven_multilingual_v2",
                     "voice_settings": {
-                        "stability": 0.5,
+                        "stability": 0.85,
                         "similarity_boost": 0.75,
                     },
                 },

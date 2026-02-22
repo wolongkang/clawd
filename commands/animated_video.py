@@ -221,7 +221,7 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, scene_count: int):
                 video=f.read(),
                 caption=f"Animated {scene_count}-scene video — {topic}",
             )
-        await query.delete()
+        await query.delete_message()
     else:
         await query.edit_message_text(
             f"Video is {size_mb:.0f}MB — exceeds Telegram's 50MB limit.\n"

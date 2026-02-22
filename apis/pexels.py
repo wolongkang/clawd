@@ -5,8 +5,20 @@ from config import PEXELS_API_KEY
 logger = logging.getLogger(__name__)
 
 
+def _best_file(video_files: list) -> str:
+    """Pick the best quality HD file from Pexels video_files list."""
+    hd = [f for f in video_files if f.get("width", 0) >= 1280 and f.get("link")]
+    if hd:
+        return max(hd, key=lambda f: f.get("width", 0))["link"]
+    # Fallback: pick largest available
+    valid = [f for f in video_files if f.get("link")]
+    if valid:
+        return max(valid, key=lambda f: f.get("width", 0))["link"]
+    return video_files[0]["link"]
+
+
 async def get_footage(keyword: str, count: int = 3) -> list:
-    """Fetch stock video clips from Pexels."""
+    """Fetch stock video clips from Pexels (prefers HD quality)."""
     try:
         response = requests.get(
             "https://api.pexels.com/videos/search",
@@ -16,8 +28,8 @@ async def get_footage(keyword: str, count: int = 3) -> list:
         )
         if response.status_code == 200:
             videos = response.json().get("videos", [])
-            urls = [v["video_files"][0]["link"] for v in videos if v.get("video_files")]
-            logger.info(f"Pexels: got {len(urls)} clips for '{keyword}'")
+            urls = [_best_file(v["video_files"]) for v in videos if v.get("video_files")]
+            logger.info(f"Pexels: got {len(urls)} HD clips for '{keyword}'")
             return urls
         logger.error(f"Pexels failed: {response.status_code}")
         return []
