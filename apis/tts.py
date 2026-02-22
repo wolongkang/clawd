@@ -1,22 +1,20 @@
 import io
-import os
 import logging
 import requests
 from config import ELEVENLABS_API_KEY
 
 logger = logging.getLogger(__name__)
 
-# ElevenLabs voice IDs — good defaults
+# ElevenLabs voice IDs
 VOICE_ID = "21m00Tcm4TlvDq8ikWAM"  # "Rachel" — clear, professional female voice
 # Other options: "ErXwobaYiN019PkySvjV" (Antoni - male), "EXAVITQu4vr4xnSDxMaL" (Bella)
 
 
 async def generate_speech(text: str, target_minutes: int = 0) -> bytes:
-    """Generate TTS audio using ElevenLabs (primary) or gTTS (fallback)."""
-
+    """Generate TTS audio using ElevenLabs."""
     word_count = len(text.split())
     est_minutes = word_count / 150
-    logger.info(f"TTS: {word_count} words, ~{est_minutes:.1f} min estimated")
+    logger.info(f"ElevenLabs: {word_count} words, ~{est_minutes:.1f} min estimated")
 
     if target_minutes > 0:
         ratio = est_minutes / target_minutes
@@ -25,21 +23,7 @@ async def generate_speech(text: str, target_minutes: int = 0) -> bytes:
         elif ratio > 1.5:
             logger.warning(f"Audio likely much longer than {target_minutes}m target")
 
-    # Try ElevenLabs first
-    if ELEVENLABS_API_KEY:
-        data = await _elevenlabs_tts(text)
-        if data:
-            return data
-        logger.warning("ElevenLabs failed, falling back to gTTS")
-
-    # Fallback to free Google TTS
-    return await _gtts_fallback(text)
-
-
-async def _elevenlabs_tts(text: str) -> bytes:
-    """Generate speech with ElevenLabs API."""
     try:
-        # ElevenLabs has a 5000 char limit per request — split if needed
         chunks = _split_text(text, max_chars=4500)
         all_audio = io.BytesIO()
 
@@ -74,22 +58,6 @@ async def _elevenlabs_tts(text: str) -> bytes:
 
     except Exception as e:
         logger.error(f"ElevenLabs error: {e}")
-        return None
-
-
-async def _gtts_fallback(text: str) -> bytes:
-    """Free Google TTS fallback."""
-    try:
-        from gtts import gTTS
-        tts = gTTS(text=text, lang="en", slow=False)
-        fp = io.BytesIO()
-        tts.write_to_fp(fp)
-        fp.seek(0)
-        data = fp.getvalue()
-        logger.info(f"gTTS fallback: {len(data)} bytes")
-        return data
-    except Exception as e:
-        logger.error(f"gTTS error: {e}")
         return None
 
 
