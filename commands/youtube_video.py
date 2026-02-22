@@ -34,21 +34,8 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
     with open(audio_path, "wb") as f:
         f.write(audio)
 
-    # 3. Avatar (optional — continues without if Runway fails/no credits)
-    avatar_url = None
-    await query.edit_message_text(f"[3/6] Creating avatar presenter...")
-    avatar_task = await runway.create_avatar(topic)
-    if avatar_task:
-        await query.edit_message_text("[3/6] Rendering avatar (takes a few minutes)...")
-        avatar_url = await runway.poll_avatar(avatar_task)
-
-    if avatar_url:
-        await query.edit_message_text("[3/6] Avatar ready!")
-    else:
-        await query.edit_message_text("[3/6] Avatar skipped (no credits) — using footage only")
-
-    # 4. Background footage (keywords extracted via OpenAI — cheap for this)
-    await query.edit_message_text("[4/6] Finding background footage...")
+    # 3. Background footage (keywords extracted via OpenAI — cheap for this)
+    await query.edit_message_text("[3/6] Finding background footage...")
     keywords = await openai_api.extract_video_keywords(script, count=6)
     if not keywords:
         keywords = [topic]
@@ -60,7 +47,20 @@ async def handle(query, context: ContextTypes.DEFAULT_TYPE, minutes: int):
         await query.edit_message_text("Could not find background footage.")
         return
 
-    await query.edit_message_text(f"[4/6] Got {len(footage_urls)} background clips")
+    await query.edit_message_text(f"[3/6] Got {len(footage_urls)} background clips")
+
+    # 4. Avatar (LAST expensive step — only after script/audio/footage all succeeded)
+    avatar_url = None
+    await query.edit_message_text("[4/6] Creating avatar presenter...")
+    avatar_task = await runway.create_avatar(topic)
+    if avatar_task:
+        await query.edit_message_text("[4/6] Rendering avatar (takes a few minutes)...")
+        avatar_url = await runway.poll_avatar(avatar_task)
+
+    if avatar_url:
+        await query.edit_message_text("[4/6] Avatar ready!")
+    else:
+        await query.edit_message_text("[4/6] Avatar skipped — using footage only")
 
     # 5. Composite everything
     await query.edit_message_text("[5/6] Compositing video (this takes a while)...")
